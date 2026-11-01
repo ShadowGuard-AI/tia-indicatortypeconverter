@@ -21,6 +21,7 @@ def ip_to_cidr(ip_address):
     """
     try:
         IPAddress(ip_address)  # Validate the IP address
+        # This is always /32, even for an IPv6 address, where the single host prefix is /128. netaddr accepts both families in the validation above, so a v6 input gets a notation that means something entirely different from one host.
         return f"{ip_address}/32"
     except AddrFormatError:
         logging.error(f"Invalid IP address: {ip_address}")
@@ -44,6 +45,7 @@ def domain_to_url(domain, scheme="http"):
         
         # Check if the domain resolves to an IP address.  This is a basic liveness check.
         try:
+            # A format conversion that makes a DNS query is doing more than it says. It costs a lookup on every call, it can hang on a slow resolver, and the result changes nothing below: a name that fails to resolve still gets its URL, only with a warning.
             socket.gethostbyname(domain)  # Resolve the domain
         except socket.gaierror:
             logging.warning(f"Domain {domain} does not resolve.")
@@ -73,6 +75,7 @@ def url_to_domain(url):
         if not parsed_url.netloc:
             raise ValueError(f"Invalid URL: {url}")
 
+        # netloc is not just the host. A port, and any userinfo, ride along in it, so the domain this returns for a URL with credentials in it contains those credentials. Callers who log the result should know that.
         return parsed_url.netloc
     except ValueError as e:
         logging.error(f"Invalid URL: {url} - {e}")
@@ -94,6 +97,7 @@ def cidr_to_ips(cidr):
     try:
         network = IPNetwork(cidr)
         # Limit the size of the network to prevent memory exhaustion
+        # The cap counts addresses, not the prefix length, so an IPv6 block of any normal size is refused too. The list this builds also includes the network and broadcast addresses, because netaddr iterates the whole block.
         if network.size > 256: # Limiting to /24
             logging.warning(f"CIDR block {cidr} is larger than /24. Consider using a more specific block.")
             return None
@@ -117,6 +121,7 @@ def deduplicate_ips(ip_list):
         list: A deduplicated list of IP addresses.
     """
     try:
+        # One bad address in the list discards the whole result: IPSet raises on it and the handler below returns an empty list, losing every valid address that was mixed in with it. The sort that follows is numeric, not string order, so 9.0.0.1 lands before 10.0.0.1 here.
         ip_set = IPSet(ip_list)
         return sorted([str(ip) for ip in ip_set])
     except AddrFormatError as e:
@@ -152,6 +157,7 @@ def main():
     if args.input:
         input_data = args.input
     else:
+        # Reading stdin to the end means a caller who runs this interactively with no input flag sits on a blank prompt until they close the stream. The empty check below only runs after that wait.
         input_data = sys.stdin.read().strip()
 
     if not input_data:
@@ -178,6 +184,7 @@ def main():
                     print(ip)
         elif args.type == "deduplicate_ips":
             # Deduplicate IPs expects a list of IPs.  Split the input data on newlines.
+            # Only this conversion splits the input, and it splits on lines. The same list pasted space separated becomes one long invalid entry, and the whole conversion returns nothing.
             ip_list = input_data.splitlines()
             result = deduplicate_ips(ip_list)
             if result:
